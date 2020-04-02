@@ -52,7 +52,7 @@ def warn_lat_range(lat):
         warnings.warn("Latitude is outside of [-90, 90]")
 
 
-def esmf_grid(lon, lat, periodic=False):
+def esmf_grid(lon, lat, periodic=False, mask=None):
     '''
     Create an ESMF.Grid object, for contrusting ESMF.Field and ESMF.Regrid
 
@@ -69,6 +69,10 @@ def esmf_grid(lon, lat, periodic=False):
     periodic : bool, optional
         Periodic in longitude? Default to False.
         Only useful for source grid.
+
+    mask : 2D numpy array, optional
+        Grid mask. Follows SCRIP convention where 1 is unmasked and 0 is
+        masked.
 
     Returns
     -------
@@ -110,6 +114,20 @@ def esmf_grid(lon, lat, periodic=False):
     # Use [...] to avoid overwritting the object. Only change array values.
     lon_pointer[...] = lon
     lat_pointer[...] = lat
+
+    # Follows SCRIP convention where 1 is unmasked and 0 is masked.
+    # See https://github.com/NCPP/ocgis/blob/61d88c60e9070215f28c1317221c2e074f8fb145/src/ocgis/regrid/base.py#L391-L404
+    if mask is not None:
+        grid_mask = np.swapaxes(mask.astype(np.int32), 0, 1)
+        grid_mask = np.where(grid_mask == 0, 0, 1)
+        if not (grid_mask.shape == lon.shape):
+            raise ValueError(
+                "mask must have the same shape as the latitude/longitude"
+                "coordinates, got: mask.shape = %s, lon.shape = %s" %
+                (mask.shape, lon.shape))
+        grid.add_item(ESMF.GridItem.MASK, staggerloc=ESMF.StaggerLoc.CENTER,
+                      from_file=False)
+        grid.mask[0][:] = grid_mask
 
     return grid
 
@@ -207,6 +225,7 @@ def esmf_regrid_build(sourcegrid, destgrid, method,
 
         - 'bilinear'
         - 'conservative', **need grid corner information**
+        - 'conservative_normed', **need grid corner information**
         - 'patch'
         - 'nearest_s2d'
         - 'nearest_d2s'
@@ -240,6 +259,7 @@ def esmf_regrid_build(sourcegrid, destgrid, method,
     # use shorter, clearer names for options in ESMF.RegridMethod
     method_dict = {'bilinear': ESMF.RegridMethod.BILINEAR,
                    'conservative': ESMF.RegridMethod.CONSERVE,
+                   'conservative_normed': ESMF.RegridMethod.CONSERVE,
                    'patch': ESMF.RegridMethod.PATCH,
                    'nearest_s2d': ESMF.RegridMethod.NEAREST_STOD,
                    'nearest_d2s': ESMF.RegridMethod.NEAREST_DTOS
@@ -251,7 +271,7 @@ def esmf_regrid_build(sourcegrid, destgrid, method,
                          '{}'.format(list(method_dict.keys())))
 
     # conservative regridding needs cell corner information
-    if method == 'conservative':
+    if method in ['conservative', 'conservative_normed']:
         if not sourcegrid.has_corners:
             raise ValueError('source grid has no corner information. '
                              'cannot use conservative regridding.')
@@ -271,12 +291,21 @@ def esmf_regrid_build(sourcegrid, destgrid, method,
         assert not os.path.exists(filename), (
             'Weight file already exists! Please remove it or use a new name.')
 
+    # re-normalize conservative regridding results
+    # https://github.com/JiaweiZhuang/xESMF/issues/17
+    if method == 'conservative_normed':
+        norm_type = ESMF.NormType.FRACAREA
+    else:
+        norm_type = ESMF.NormType.DSTAREA
+
     # Calculate regridding weights.
     # Must set unmapped_action to IGNORE, otherwise the function will fail,
     # if the destination grid is larger than the source grid.
     regrid = ESMF.Regrid(sourcefield, destfield, filename=filename,
                          regrid_method=esmf_regrid_method,
                          unmapped_action=ESMF.UnmappedAction.IGNORE,
+                         norm_type=norm_type,
+                         src_mask_values=[0], dst_mask_values=[0],
                          ignore_degenerate=ignore_degenerate)
 
     return regrid

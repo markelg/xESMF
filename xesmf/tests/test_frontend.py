@@ -50,7 +50,7 @@ def test_as_2d_mesh():
 methods_list = ['bilinear', 'conservative', 'nearest_s2d', 'nearest_d2s']
 
 @pytest.mark.parametrize("locstream_in,locstream_out,method", [
-                         (False, False, 'conservative'), 
+                         (False, False, 'conservative'),
                          (False, False, 'bilinear'),
                          (False, True, 'bilinear'),
                          (False, False, 'nearest_s2d'),
@@ -283,7 +283,7 @@ def test_regrid_dask_from_locstream():
 
     regridder = xe.Regridder(ds_locs, ds_in, 'nearest_s2d', locstream_in=True)
 
-    outdata = regridder(ds_locs['lat'].data) 
+    outdata = regridder(ds_locs['lat'].data)
 
     # clean-up
     regridder.clean_weight_file()
@@ -332,7 +332,7 @@ def test_regrid_dataarray_dask_from_locstream():
 
     regridder = xe.Regridder(ds_locs, ds_in, 'nearest_s2d', locstream_in=True)
 
-    outdata = regridder(ds_locs['lat']) 
+    outdata = regridder(ds_locs['lat'])
 
     # clean-up
     regridder.clean_weight_file()
@@ -400,3 +400,20 @@ def test_ds_to_ESMFlocstream():
     ds_bogus['lon'] = ds_locs['lon']
     with pytest.raises(ValueError):
         locstream, shape = ds_to_ESMFlocstream(ds_bogus)
+
+
+def test_build_regridder_with_masks():
+    ds_in['mask'] = xr.DataArray(
+        np.random.randint(2, size=ds_in['data'].shape),
+        dims=('y', 'x'))
+    print(ds_in)
+    # 'patch' is too slow to test
+    for method in ['bilinear', 'conservative', 'nearest_s2d', 'nearest_d2s']:
+        regridder = xe.Regridder(ds_in, ds_out, method)
+
+        # check screen output
+        assert repr(regridder) == str(regridder)
+        assert 'xESMF Regridder' in str(regridder)
+        assert method in str(regridder)
+
+        regridder.clean_weight_file()
